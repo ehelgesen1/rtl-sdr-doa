@@ -8,6 +8,7 @@ from multiprocessing import Process, Barrier, Queue
 import queue
 import math
 import sys
+from scipy.io import loadmat
 
 
 np.set_printoptions(threshold=sys.maxsize)
@@ -204,11 +205,15 @@ class PlotTime:
                 # print(data[i])
                 plt.plot(self.t, np.abs(data[i][:len(self.t)]), alpha=0.3, marker='x')
 
+            # plt.plot(self.t, np.abs(data[0][:len(self.t)]), alpha=0.3, marker='x')
+            # plt.plot(self.t, np.abs(data[1][:len(self.t)]), alpha=0.3, marker='x')
+
             plt.title('Signal Over Time')
             plt.xlabel('Time (sec)')
             plt.ylabel('Amplitude')
             plt.legend(["1", "2", "3", "4"], loc="upper right")
             plt.xlim([0.02, 0.021])
+            plt.ylim([-0.05, 0.3])
             plt.draw()
             plt.pause(0.002)
 
@@ -237,11 +242,19 @@ class PlotCorr:
             self.axReal.cla()
             self.axImag.cla()
 
-            self.axReal.plot(np.real(data[0]))
-            self.axImag.plot(np.imag(data[0]))
+            self.axReal.plot(np.real(data[0]), alpha=0.5)
+            self.axReal.plot(np.real(data[1]), alpha=0.5)
+            self.axReal.plot(np.real(data[2]), alpha=0.5)
 
-            self.axReal.set_title('Correlation between channels')
-            self.axImag.set_title('Correlation between channels')
+            self.axImag.plot(np.imag(data[0]), alpha=0.5)
+            self.axImag.plot(np.imag(data[1]), alpha=0.5)
+            self.axImag.plot(np.imag(data[2]), alpha=0.5)
+
+            self.axReal.set_xlim([4100, 4200])
+            self.axImag.set_xlim([4100, 4200])
+
+            self.axReal.set_title('Correlation between channels (real)')
+            self.axImag.set_title('Correlation between channels (imaginary)')
 
             self.axReal.set_xlabel('Sample Delay')
             self.axImag.set_xlabel('Sample Delay')
@@ -292,7 +305,7 @@ class PlotAOA:
 
             thetaMax = self.thetaScan[np.argmax(data)]
 
-            print(np.round(thetaMax, decimals=3))
+            # print(np.round(thetaMax, decimals=3))
 
             plt.figure(4)
             plt.clf()
@@ -314,8 +327,8 @@ class PlotAOA:
             #thetaMax = thetaMax * np.pi / 180
 
 
-            print(np.round(thetaMax*180/np.pi, decimals=3))
-            print(np.round(np.max(data), decimals=3))
+            # print(np.round(thetaMax*180/np.pi, decimals=3))
+            # print(np.round(np.max(data), decimals=3))
 
             self.ax.cla()
             self.ax.semilogy(self.thetaScanRad, data)
@@ -434,37 +447,40 @@ class DSP:
 
         # Calibration filter, Fpass = 25khz
         # Wide filter so we get lots of noise power
-        # self.calFilterCoeff = np.array([[1, -1.98881793496472, 1, 1, -1.97971988633092, 0.985072577263330],
-        #                                 [1, -1.98676631359207, 1, 1, -1.94795766338301, 0.953651336698271],
-        #                                 [1, -1.98085690041635, 1, 1, -1.91055780634462, 0.917023894428133],
-        #                                 [1, -1.96276323213348, 1, 1, -1.86662464003702, 0.874252620327643],
-        #                                 [1, -1.86621618507353, 1, 1, -1.82456592538589, 0.833425332818471],
-        #                                 [1, 1, 0, 1, -0.902892712697377, 0]])
-        #
-        # self.calFilterScale = np.array([0.478685369430631,
-        #                                 0.430240912452897,
-        #                                 0.337776442903418,
-        #                                 0.204850762503578,
-        #                                 0.0662218179191029,
-        #                                 0.0485536436513117,
-        #                                 1])
+        self.calFilterCoeffIIR = np.array([[1, -1.98881793496472, 1, 1, -1.97971988633092, 0.985072577263330],
+                                        [1, -1.98676631359207, 1, 1, -1.94795766338301, 0.953651336698271],
+                                        [1, -1.98085690041635, 1, 1, -1.91055780634462, 0.917023894428133],
+                                        [1, -1.96276323213348, 1, 1, -1.86662464003702, 0.874252620327643],
+                                        [1, -1.86621618507353, 1, 1, -1.82456592538589, 0.833425332818471],
+                                        [1, 1, 0, 1, -0.902892712697377, 0]])
+
+        self.calFilterScaleIIR = np.array([0.478685369430631,
+                                        0.430240912452897,
+                                        0.337776442903418,
+                                        0.204850762503578,
+                                        0.0662218179191029,
+                                        0.0485536436513117,
+                                        1])
 
         # Fpass = 5 khz
-        self.calFilterCoeff = np.array([[1, -1.99929334535726, 1, 1, -1.99535226018595, 0.995600458358106],
-                                       [1, -1.99908625212125, 1, 1, -1.98602948505367, 0.986297943532363],
-                                       [1, -1.99834166684626, 1, 1, -1.97561032377051, 0.975918284143802],
-                                       [1, -1.99414876230346, 1, 1, -1.96567775478440, 0.966031872106796],
-                                       [1, 1, 0, 1, -0.980597503956064, 0]])
+        # self.calFilterCoeffIIR = np.array([[1, -1.99929334535726, 1, 1, -1.99535226018595, 0.995600458358106],
+        #                                    [1, -1.99908625212125, 1, 1, -1.98602948505367, 0.986297943532363],
+        #                                    [1, -1.99834166684626, 1, 1, -1.97561032377051, 0.975918284143802],
+        #                                    [1, -1.99414876230346, 1, 1, -1.96567775478440, 0.966031872106796],
+        #                                    [1, 1, 0, 1, -0.980597503956064, 0]])
+        #
+        # self.calFilterScale = np.array([0.351229804689344,
+        #                                 0.293799290740268,
+        #                                 0.185704767828524,
+        #                                 0.0605200712665570,
+        #                                 0.00970124802196806,
+        #                                 1])
 
-        self.calFilterScale = np.array([0.351229804689344,
-                                       0.293799290740268,
-                                       0.185704767828524,
-                                       0.0605200712665570,
-                                       0.00970124802196806,
-                                       1])
 
+        mat = loadmat('5k_FIR_30db.mat')
+        self.FIRfilter = mat["Num"].squeeze()
 
-        self.calFilterInitCond = signal.sosfilt_zi(self.calFilterCoeff)  # compute initial conditions for filter
+        self.calFilterInitCond = signal.sosfilt_zi(self.calFilterCoeffIIR)  # compute initial conditions for filter
         self.calFiltResponseLength = 20
 
         # Decimate
@@ -477,18 +493,29 @@ class DSP:
         self.batchSize = 200
 
         self.numRadiosMinusOne = self.numRadios - 1
-        # self.xcorr = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1), dtype=complex)
-        self.xcorr = np.zeros((self.numRadiosMinusOne, 2*self.batchSize-1 ), dtype=complex)
-        # self.lags = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1))
-        self.lags = np.zeros((self.numRadiosMinusOne, 2*self.batchSize-1))
+        self.xcorr = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1), dtype=complex)
+        #self.xcorr = np.zeros((self.numRadiosMinusOne, 2*self.batchSize-1 ), dtype=complex)
+        self.lags = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1))
+        #self.lags = np.zeros((self.numRadiosMinusOne, 2*self.batchSize-1))
 
         self.lag = np.zeros(self.numRadiosMinusOne)
-        self.phase = np.zeros(self.numRadiosMinusOne)
+        # self.phase = [[] for _ in range(self.numRadios)]
+        # self.phaseDiff = np.zeros(self.numRadiosMinusOne)
+        # self.phase = np.zeros(self.numRadiosMinusOne)
+        # self.tmpPhase = [[] for _ in range(self.numRadios)]
 
         self.downsampleLength = downsampleLength
+        # self.tmpLag = np.zeros(self.numRadiosMinusOne)
+        self.firstCall = True
+        # self.avgLag = np.zeros((self.numRadiosMinusOne,1))
+        self.movingAvgWindow = 20
+        # self.phaseMovingAvg = [[] for _ in range(self.numRadios)]
+        self.phaseMovingAvg = np.zeros((self.movingAvgWindow, self.numRadiosMinusOne))
+        self.movingAvgCounter = 0
+        self.avgLag = np.zeros(self.numRadios)
 
         # self.phaseDiff = np.zeros((self.numRadiosMinusOne, downsampleLength))
-        # self.phaseDiff = np.zeros(self.numRadiosMinusOne)
+        self.phaseDiff = np.zeros(self.numRadiosMinusOne)
 
         self.window = np.hamming(downsampleLength)
 
@@ -508,15 +535,20 @@ class DSP:
 
         return self.filtData
 
-    def FilterCal(self, samples):
+    def FilterCalIIR(self, samples):
         for i in range(self.numRadios):
             # compute initial filter condition based on input samples to minimize transient
             zi = self.calFilterInitCond * np.average(samples[i][:self.calFiltResponseLength])
 
             # apply filter with initial condition, multiply times scale vector
-            # self.filtData[i], zf = signal.sosfilt(self.calFilterCoeff, samples[i], zi=zi)
-            self.filtData[i], zf = signal.sosfilt(self.calFilterCoeff, samples[i], zi=zi)
-            self.filtData[i] *= np.prod(self.calFilterScale)
+            self.filtData[i], zf = signal.sosfilt(self.calFilterCoeffIIR, samples[i], zi=zi)
+            self.filtData[i] *= np.prod(self.calFilterScaleIIR)
+
+        return self.filtData
+
+    def FilterCalFIR(self, samples):
+        for i in range(self.numRadios):
+            self.filtData[i] = signal.filtfilt(self.FIRfilter, 1, samples[i])
 
         return self.filtData
 
@@ -525,64 +557,31 @@ class DSP:
         for i in range(self.numRadios):
             # decimate by a factor of 24 to 100 kHz
             self.downsampledData[i] = signal.decimate(samples[i], self.downsampleFactor, ftype='fir', zero_phase=True)
+            # self.downsampledData[i] = signal.resample(samples[i], int(self.sampleLength/self.downsampleFactor)+1)
 
             # Remove DC bias from decimation
-            avg = np.average(self.downsampledData[i])
-            self.downsampledData[i] -= avg
+            # avg = np.average(self.downsampledData[i])
+            # self.downsampledData[i] -= avg
 
         return self.downsampledData
 
     # Function to determine delay offset between channels, and amplitude normalization
     def DetermineSync(self, samples):
+        # chan0_conj = np.conj(samples[0])
+
         # iterate over each radio to correlate with channel one
         for i in range(self.numRadiosMinusOne):
-            tmpLag = []
-            tmpPhase = []
-
-            # cross-correlate samples to get them loosely in-phase
-            for j in np.arange(self.startBatch, self.endBatch, self.batchSize):
-                self.xcorr[i] = signal.correlate(samples[0][j:j+self.batchSize], samples[i + 1][j:j+self.batchSize], method="direct")  # compute cross correlation of channel 1 with other channels
-                self.lags[i] = signal.correlation_lags(samples[0][j:j+self.batchSize].size, samples[i + 1][j:j+self.batchSize].size, mode="full")  # compute lags for all correlation offsets
-                # self.lag[i] = self.lags[i][np.argmax(self.xcorr[i])]  # find correlation peak where data matches
-
-                # maxi = np.argmax(np.abs(self.xcorr[i]))
-                # #print(maxi)
-                #
-                # tmpLag.append(np.imag(self.lags[i][maxi]))
-                # #print(tmpLag)
-
-                if abs(np.min(self.xcorr[i])) > np.max(self.xcorr[i]):  # orthogonal
-                    tmpLag.append(self.lags[i][np.argmin(self.xcorr[i])])
-                    print('Negative xcorr')
-                else:
-                    tmpLag.append(self.lags[i][np.argmax(self.xcorr[i])])
-
-            self.lag[i] = np.round(np.average(tmpLag))  # average time lag for each channel and round to nearest int
-
-            # tmpSamples = np.roll(samples[i+1], int(self.lag[i - 1]))  # circularly shift array
-
-            #
-            # print("lag "+ str(i+1) + ": " + str(self.lag[i]))
-            #
-            # # fractional delay
-            # for j in np.arange( self.startBatch, self.endBatch, self.batchSize):
-            #     chan0_h = signal.hilbert(np.real(samples[0][j:j+self.batchSize]))
-            #     chani_h = signal.hilbert(np.real(tmpSamples[j:j+self.batchSize]))
-            #
-            #     phase_rad = np.angle(chan0_h / chani_h)
-            #
-            #     # y2_3 = newY2 * np.exp(-1j * phase_rad)
-            #     tmpPhase.append(phase_rad)
-            #
-            # self.phase[i] = np.average(tmpPhase)
-            # print("phase "+ str(i+1) + ": " + str(self.phase[i]))
-
+            # tmpPhase = []
+            self.xcorr[i] = signal.correlate(samples[0], samples[i + 1], method="fft")  # compute cross correlation of channel 1 with other channels
+            self.lags[i] = signal.correlation_lags(samples[0].size, samples[i + 1].size, mode="full")  # compute lags for all correlation offsets
+            # self.lag[i] = self.lags[i][np.argmax(np.abs(self.xcorr[i]))]  # find correlation peak where data matches
+            argmax = np.argmax(np.abs(self.xcorr[i]))
+            self.phaseDiff[i] = -np.angle(self.xcorr[i][argmax]) / np.pi
 
         return self.lag, self.xcorr
 
     # Identical to DetermineOffset, only to check correlation
     def CheckSync(self, samples):
-        tmpLag = []
         print("Test diff: ")
 
         # iterate over each radio to correlate with channel one
@@ -590,14 +589,10 @@ class DSP:
             self.xcorrCheck[i] = signal.correlate(samples[0], samples[i + 1], method="fft")  # compute cross correlation of channel 1 with other channels
             self.lagsCheck[i] = signal.correlation_lags(samples[0].size, samples[i + 1].size, mode="full")  # compute lags for all correlation offsets
             # self.lagCheck[i] = self.lagsCheck[i][np.argmax(self.xcorrCheck[i])]  # find correlation peak where data matches
+            argmax = np.argmax(np.abs(self.xcorrCheck[i]))
+            self.lagCheck[i] = -np.angle(self.xcorr[i][argmax]) / np.pi
 
-            if abs(np.min(self.xcorr[i])) > np.max(self.xcorr[i]):  # orthogonal
-                tmpLag.append(self.lags[i][np.argmin(self.xcorr[i])])
-                print('Negative xcorr')
-            else:
-                tmpLag.append(self.lags[i][np.argmax(self.xcorr[i])])
-
-            self.lagCheck[i] = np.round(np.average(tmpLag))  # average time lag for each channel and round to nearest int
+            # self.lagCheck[i] = np.round(np.average(tmpLag))  # average time lag for each channel and round to nearest int
 
         return self.lagCheck, self.xcorrCheck
         # return self.phaseDiff, self.xcorrCheck
@@ -607,10 +602,20 @@ class DSP:
         newSamples = np.zeros(samples.shape, dtype=complex)
         newSamples[0] = samples[0]  # copy channel 1 samples to output
 
+        # if self.firstCall:
+        #     self.firstCall = False
+
+            # for i in range(self.numRadiosMinusOne):
+            #     # self.avgLag[i] = np.average(self.tmpLag[i])
+            #     # print(self.avgLag[i])
+            #     self.phaseDiff[i] = np.average(self.phase[i])
+            #     print("Average phase offset: " + str(self.phase[i]))
+
         for i in range(1, self.numRadios):
-            newSamples[i] = np.roll(samples[i], int(self.lag[i - 1]))  # circularly shift array
-            # newSamples[i] = tmpSamples * np.exp(1j*self.phase[i - 1])
-            # newSamples[i] = np.roll(samples[i], int(self.lag[i - 1]))  # circularly shift array
+            # newSamples[i] = np.roll(samples[i], int(self.avgLag[i - 1]))  # circularly shift array
+            # print("Correct sync: ")
+            # print("i: " + str(i) + ", " + str(self.phaseDiff[i-1]))
+            newSamples[i] = samples[i] * np.exp(-1j*self.phaseDiff[i - 1])
 
         return newSamples
 
@@ -655,9 +660,7 @@ class DSP_AOA:  # TODO: add null steering
             # print("radius: " + str(self.radius*0.0254))
             # self.radius = (self.radius * 0.0254) / wavelength  # normalized radius
             # print(wavelength)
-            # print("normalized radius: " + str(self.radius))
 
-            # d = np.sqrt(2 * self.radius ** 2 * (1 - np.cos(2 * np.pi / self.numRadios)))
             sf = 1.0 / (np.sqrt(2.0) * np.sqrt(1.0 - np.cos(2 * np.pi / self.numRadios)))
             r = self.normAntSpacing * sf
             self.x = r * sf * np.cos(2 * np.pi / self.numRadios * np.arange(self.numRadios))
@@ -673,6 +676,10 @@ class DSP_AOA:  # TODO: add null steering
 
     def MUSIC(self, samples):
         avg = []
+        # print("0: " + str(samples[0][1000]))
+        # print("1: " + str(samples[1][1000]))
+        # print("2: " + str(samples[2][1000]))
+        # print("3: " + str(samples[3][1000]))
 
         for i in range(self.batchSize, self.length-self.batchSize, self.batchSize):
             # part that doesn't change with theta_i
@@ -797,7 +804,8 @@ def main():
             samples = collect.ReturnSamples()
 
             if not radiosSynchronized:
-                filteredSamples = dsp.FilterCal(samples)  # Lowpass filter incoming samples using calibration filter
+                filteredSamples = dsp.FilterCalIIR(samples)  # Lowpass filter incoming samples using calibration filter
+                #filteredSamples = dsp.FilterCalFIR(samples)
                 downsampledSamples = dsp.DecimateData(filteredSamples)  # Decimate samples
                 offsets, xcorr = dsp.DetermineSync(downsampledSamples)  # Calculate delay between channels
                 phaseCorrectedSamples = dsp.CorrectSync(downsampledSamples)  # Correct delay offset from last step
@@ -821,11 +829,13 @@ def main():
 
             else:
                 filteredSamples = dsp.FilterData(samples)
+                #filteredSamples = dsp.FilterCalFIR(samples)
                 downsampledSamples = dsp.DecimateData(filteredSamples)
                 phaseCorrectedSamples = dsp.CorrectSync(downsampledSamples)
                 angles = dsp_aoa.MUSIC(phaseCorrectedSamples)
                 # window = np.hamming(downsampleLength)
                 timeplotFiltered.plotTime(phaseCorrectedSamples)
+                #timeplotFiltered.plotTime(downsampledSamples)
 
                 aoaPlot.plotAoaPolar(angles)
                 #aoaPlot.plotAoa(angles)
