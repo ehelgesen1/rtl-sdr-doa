@@ -48,17 +48,89 @@ class Sdr: # TODO: implmement functions to change gain, frequency, etc.
         self.sdr.set_sample_rate(sampleRate)
         self.sdr.set_bandwidth(sampleRate)
 
+    def SetGain(self, gain):
+        self.sdr.gain = gain
+
+    def SetFrequency(self, frequency):
+        self.sdr.center_freq = frequency
+
+    def SetBandwidth(self, bandwidth):
+        self.sdr.bandwidth = bandwidth
+
+def StartProc(numRadios, F, Fs, sampleLength, gain, sampleQueue, commandQueue):
+    proc = []
+    barrier = Barrier(numRadios)  # barrier for each channel/radio
+
+    # start reading samples from each radio
+    for i in range(numRadios):
+        name = "chan" + str(i) + "_proc"
+        proc.append(Process(name=name,
+                            target=StartAsyncRead,
+                            args=(i + 1, F, Fs, sampleLength, gain, sampleQueue, commandQueue[i], barrier)))
+        proc[i].start()
+        time.sleep(0.1)  # I don't know why librtlsdr craps out without this delay
+
+# Function to start async read from one radio
+def StartAsyncRead(radioNum, F, Fs, sampleLength, gain, sampleQueue, commandQueue, barrier):
+    currentSdr = Sdr(radioNum, F, Fs, gain)
+
+    callback = GetSamplesCallback(sampleQueue, commandQueue)
+
+    barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
+    currentSdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), currentSdr, callback))
 
 """
     Callback for async sample reads, puts radio number and data into queue
 """
-class GetSamplesCallback(object):
-    def __init__(self, sampleQ):
+class GetSamplesCallback:
+    def __init__(self, sampleQ, commandQ):
         self.sampleQ = sampleQ
+        self.commandQ = commandQ
+        self.numSamples = 100000
 
+    # def __call__(self, samples, context):
     def __call__(self, samples, context):
+        (radioNum, sdr, callback) = context  # unpack
         # put data in queue with format: (context, samples[...])
-        self.sampleQ.put(np.append(np.array(context), np.array(samples)))
+        # self.sampleQ.put(np.append(np.array(context), np.array(samples)))
+        self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
+
+        try:
+            cmdDict = self.commandQ.get_nowait()  # pull dict from queue
+
+            cmd, val = list(cmdDict.items())[0]  # get command & value to send (change freq, gain, etc.)
+
+            if cmd == 'frequency':
+                sdr.SetFrequency(val)
+            elif cmd == 'gain':
+                sdr.SetGain(val)
+            elif cmd == 'bandwidth':
+                sdr.SetBandwidth(val)
+            else:
+                print("Command not supported!")
+
+        except queue.Empty:  # no new commands
+            pass
+
+"""
+    Class to handle passing radio commands to subprocesses (eg. gain, center frequency, etc.) 
+"""
+class RadioManager:
+    def __init__(self, numRadios):
+        self.commandQ = []
+
+        for i in range(numRadios):
+            self.commandQ.append(Queue())
+
+    def SendCommand(self, property, value):
+        command = {property: value}  # dict
+
+        # add command to each queue
+        for radioQ in self.commandQ:
+            radioQ.put(command)
+
+    def GetQueue(self):
+        return self.commandQ
 
 """
     Class to compile samples for higher level DSP functions
@@ -118,29 +190,6 @@ class CollectSamples:
                         i -= 1  # reset index to last value so this index is looped over again
                         fail += 1  # increment fail counter
                         print("Queue retry")
-
-
-# Function to start async read from one radio
-def StartAsyncRead(radioNum, F, Fs, sampleLength, gain, queue, barrier):
-    currentSdr = Sdr(radioNum, F, Fs, gain)
-
-    callback = GetSamplesCallback(queue)
-
-    barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
-    currentSdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=int(radioNum))
-
-def StartProc(numRadios, F, Fs, sampleLength, gain, queue):
-    proc = []
-    barrier = Barrier(numRadios)  # barrier for each channel/radio
-
-    # start reading samples from each radio
-    for i in range(numRadios):
-        name = "chan" + str(i) + "_proc"
-        proc.append(Process(name=name,
-                            target=StartAsyncRead,
-                            args=(i + 1, F, Fs, sampleLength, gain, queue, barrier)))
-        proc[i].start()
-        time.sleep(0.1)  # I don't know why librtlsdr craps out without this delay
 
 """
     Functions for plotting data.
@@ -574,9 +623,13 @@ class DSP:
             # tmpPhase = []
             self.xcorr[i] = signal.correlate(samples[0], samples[i + 1], method="fft")  # compute cross correlation of channel 1 with other channels
             self.lags[i] = signal.correlation_lags(samples[0].size, samples[i + 1].size, mode="full")  # compute lags for all correlation offsets
-            # self.lag[i] = self.lags[i][np.argmax(np.abs(self.xcorr[i]))]  # find correlation peak where data matches
-            argmax = np.argmax(np.abs(self.xcorr[i]))
-            self.phaseDiff[i] = -np.angle(self.xcorr[i][argmax]) / np.pi
+            self.lag[i] = self.lags[i][np.argmax(np.abs(self.xcorr[i]))]  # find correlation peak where data matches
+            tmpSamples = np.roll(samples[i], int(self.avgLag[i - 1]))  # circularly shift array
+            xcorr = signal.correlate(samples[0], tmpSamples, method="fft")
+            argmax = np.argmax(np.abs(xcorr))
+            self.phaseDiff[i] = -np.angle(xcorr[argmax]) / np.pi
+
+        # print(self.phaseDiff)
 
         return self.lag, self.xcorr
 
@@ -602,20 +655,13 @@ class DSP:
         newSamples = np.zeros(samples.shape, dtype=complex)
         newSamples[0] = samples[0]  # copy channel 1 samples to output
 
-        # if self.firstCall:
-        #     self.firstCall = False
-
-            # for i in range(self.numRadiosMinusOne):
-            #     # self.avgLag[i] = np.average(self.tmpLag[i])
-            #     # print(self.avgLag[i])
-            #     self.phaseDiff[i] = np.average(self.phase[i])
-            #     print("Average phase offset: " + str(self.phase[i]))
-
         for i in range(1, self.numRadios):
-            # newSamples[i] = np.roll(samples[i], int(self.avgLag[i - 1]))  # circularly shift array
-            # print("Correct sync: ")
-            # print("i: " + str(i) + ", " + str(self.phaseDiff[i-1]))
-            newSamples[i] = samples[i] * np.exp(-1j*self.phaseDiff[i - 1])
+            newSamples[i] = np.roll(samples[i], int(self.lag[i - 1]))  # circularly shift array
+            newSamples[i] *= np.exp(-1j*self.phaseDiff[i - 1])
+            # print(i)
+            # print("Phase diff: " + str(self.phaseDiff[i - 1]))
+            # # print("Samples: " + str(samples[i][500]))
+            # print("New samples: " + str(newSamples[i][500]))
 
         return newSamples
 
@@ -730,7 +776,7 @@ def main():
     sampleRate = 2.4e6  # Msps
     centerFrequency = 162.550e6  # MHz
     # centerFrequency = 460.800e6  # MHz
-    defaultGain = 1
+    defaultGain = 15
 
     # Array configuration
     numRadios = 4
@@ -753,6 +799,7 @@ def main():
     downsampleFactor = 24  # downsampled Fs = 100kHz
     downsampleFs = sampleRate / downsampleFactor
     downsampleLength = math.ceil(sampleLength / downsampleFactor) # round up downsampled length
+    calGain = 1
 
     # DoA configuration
     scanAngle = 360  # +/-x degrees  TODO: make this better for circular array
@@ -773,19 +820,23 @@ def main():
     # wf = Waterfall(sdr1)
     # wf.start()
 
-    # Start multiprocessing queue
+    # Start samples queue
     sampleQ = Queue()
 
-    # Start new process for each channel
-    StartProc(numRadios, centerFrequency, sampleRate, sampleLength, defaultGain, sampleQ)
+    # Start manager for each radio
+    radioManager = RadioManager(numRadios)
+    commandQ = radioManager.GetQueue()
 
-    # Create object to collect and manage new data from queue
+    # Start new process for each channel
+    StartProc(numRadios, centerFrequency, sampleRate, sampleLength, calGain, sampleQ, commandQ)
+
+    # Collect and manage new data from queue
     collect = CollectSamples(numRadios, sampleLength, sampleQ)
 
-    # Create object to run DSP
+    # Run DSP
     dsp = DSP(numRadios, sampleLength, downsampleLength, downsampleFactor, filterType)
 
-    # Create object to run direction finding
+    # Run direction finding
     dsp_aoa = DSP_AOA(centerFrequency, numRadios, numSignals, antSpacing, scanAngle, numPoints, downsampleLength, arrayType)
 
     filteredSamples = np.zeros((numRadios, downsampleLength), dtype=complex)
@@ -793,6 +844,7 @@ def main():
     angles = np.array(numPoints)
 
     count = 0
+    firstCall = True
 
     print('Calibrating...')
 
@@ -803,6 +855,7 @@ def main():
         if collect.SamplesAvailable():  #
             samples = collect.ReturnSamples()
 
+            # Calibration
             if not radiosSynchronized:
                 filteredSamples = dsp.FilterCalIIR(samples)  # Lowpass filter incoming samples using calibration filter
                 #filteredSamples = dsp.FilterCalFIR(samples)
@@ -827,11 +880,20 @@ def main():
 
                 count += 1
 
+            # Direction finding
             else:
+                if firstCall:
+                    firstCall = False
+                    radioManager.SendCommand('gain', defaultGain)
+
                 filteredSamples = dsp.FilterData(samples)
                 #filteredSamples = dsp.FilterCalFIR(samples)
                 downsampledSamples = dsp.DecimateData(filteredSamples)
                 phaseCorrectedSamples = dsp.CorrectSync(downsampledSamples)
+                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[0][500]))
+                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[1][500]))
+                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[2][500]))
+                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[3][500]))
                 angles = dsp_aoa.MUSIC(phaseCorrectedSamples)
                 # window = np.hamming(downsampleLength)
                 timeplotFiltered.plotTime(phaseCorrectedSamples)
