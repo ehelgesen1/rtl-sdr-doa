@@ -26,96 +26,112 @@ np.set_printoptions(threshold=sys.maxsize)
       sampRate: sample rate
       gain: default gain
 """
-class Sdr: # TODO: implmement functions to change gain, frequency, etc.
-    def __init__(self,
-                 radioNum,
-                 centerFreq,
-                 sampleRate,
-                 gain):
+# class Sdr: # TODO: implmement functions to change gain, frequency, etc.
+#     def __init__(self,
+#                  radioNum,
+#                  centerFreq,
+#                  sampleRate,
+#                  gain):
+#
+#         self.centerFreq = centerFreq
+#         # self.callback = 0
+#
+#         self.deviceIndex = RtlSdr.get_device_index_by_serial(str(radioNum))
+#         self.sdr = RtlSdr(device_index=self.deviceIndex,
+#                           test_mode_enabled=False,
+#                           serial_number=None,
+#                           dithering_enabled=False)
+#         self.sdr.set_center_freq(centerFreq)
+#         self.sdr.set_agc_mode(False)
+#         # self.sdr.set_manual_gain_enabled(True)
+#         self.sdr.set_gain(gain)
+#         self.sdr.set_sample_rate(sampleRate)
+#         self.sdr.set_bandwidth(sampleRate)
+#
+#     def SetGain(self, gain):
+#         # self.sdr.gain = gain
+#         self.sdr.cancel_read_async()
+#         time.sleep(1)
+#         self.sdr.set_gain(gain)
+#
+#     def SetFrequency(self, frequency):
+#         # self.sdr.center_freq = frequency
+#         self.sdr.set_center_freq(frequency)
+#
+#     def SetBandwidth(self, bandwidth):
+#         # self.sdr.bandwidth = bandwidth
+#         self.sdr.set_bandwidth(bandwidth)
 
-        self.centerFreq = centerFreq
-        # self.callback = 0
-
-        self.deviceIndex = RtlSdr.get_device_index_by_serial(str(radioNum))
-        self.sdr = RtlSdr(device_index=self.deviceIndex,
-                          test_mode_enabled=False,
-                          serial_number=None,
-                          dithering_enabled=False)
-        self.sdr.set_center_freq(centerFreq)
-        self.sdr.set_agc_mode(False)
-        # self.sdr.set_manual_gain_enabled(True)
-        self.sdr.set_gain(gain)
-        self.sdr.set_sample_rate(sampleRate)
-        self.sdr.set_bandwidth(sampleRate)
-
-    def SetGain(self, gain):
-        self.sdr.gain = gain
-
-    def SetFrequency(self, frequency):
-        self.sdr.center_freq = frequency
-
-    def SetBandwidth(self, bandwidth):
-        self.sdr.bandwidth = bandwidth
-
-def StartProc(numRadios, F, Fs, sampleLength, gain, sampleQueue, commandQueue):
-    proc = []
-    barrier = Barrier(numRadios)  # barrier for each channel/radio
-
-    # start reading samples from each radio
-    for i in range(numRadios):
-        name = "chan" + str(i) + "_proc"
-        proc.append(Process(name=name,
-                            target=StartAsyncRead,
-                            args=(i + 1, F, Fs, sampleLength, gain, sampleQueue, commandQueue[i], barrier)))
-        proc[i].start()
-        time.sleep(0.1)  # I don't know why librtlsdr craps out without this delay
 
 # Function to start async read from one radio
-def StartAsyncRead(radioNum, F, Fs, sampleLength, gain, sampleQueue, commandQueue, barrier):
-    currentSdr = Sdr(radioNum, F, Fs, gain)
-
-    callback = GetSamplesCallback(sampleQueue, commandQueue)
-
-    barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
-    currentSdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), currentSdr, callback))
+# def StartAsyncRead(radioNum,
+#                    sampleQueue,
+#                    commandQueue,
+#                    sdr=None,
+#                    barrier=None,
+#                    F=100e6,
+#                    Fs=2.4e6,
+#                    sampleLength=100000,
+#                    gain=1):
+#     # currentSdr = Sdr(radioNum, F, Fs, gain)
+#     #
+#     # callback = GetSamplesCallback(sampleQueue, commandQueue)
+#     #
+#     # barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
+#     # currentSdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), currentSdr, callback))
+#
+#     if sdr is None:
+#         sdr = Sdr(radioNum, F, Fs, gain)
+#
+#         callback = GetSamplesCallback(sampleQueue, commandQueue)
+#
+#         barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
+#         sdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), sdr, callback))
+#     else:
+#         callback = GetSamplesCallback(sampleQueue, commandQueue)
+#
+#         # barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
+#         sdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), sdr, callback))
 
 """
     Callback for async sample reads, puts radio number and data into queue
 """
-class GetSamplesCallback:
-    def __init__(self, sampleQ, commandQ):
-        self.sampleQ = sampleQ
-        self.commandQ = commandQ
-        self.numSamples = 100000
-
-    # def __call__(self, samples, context):
-    def __call__(self, samples, context):
-        (radioNum, sdr, callback) = context  # unpack
-        # put data in queue with format: (context, samples[...])
-        # self.sampleQ.put(np.append(np.array(context), np.array(samples)))
-        self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
-
-        try:
-            cmdDict = self.commandQ.get_nowait()  # pull dict from queue
-
-            cmd, val = list(cmdDict.items())[0]  # get command & value to send (change freq, gain, etc.)
-
-            if cmd == 'frequency':
-                sdr.SetFrequency(val)
-            elif cmd == 'gain':
-                sdr.SetGain(val)
-            elif cmd == 'bandwidth':
-                sdr.SetBandwidth(val)
-            else:
-                print("Command not supported!")
-
-        except queue.Empty:  # no new commands
-            pass
+# class GetSamplesCallback:
+#     def __init__(self, sampleQ, commandQ):
+#         self.sampleQ = sampleQ
+#         self.commandQ = commandQ
+#         self.numSamples = 100000
+#
+#     # def __call__(self, samples, context):
+#     def __call__(self, samples, context):
+#         (radioNum, sdr, callback) = context  # unpack
+#         # put data in queue with format: (context, samples[...])
+#         # self.sampleQ.put(np.append(np.array(context), np.array(samples)))
+#         self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
+#
+#         try:
+#             cmdDict = self.commandQ.get_nowait()  # pull dict from queue
+#
+#             cmd, val = list(cmdDict.items())[0]  # get command & value to send (change freq, gain, etc.)
+#
+#             if cmd == 'frequency':
+#                 sdr.SetFrequency(val)
+#             elif cmd == 'gain':
+#                 sdr.SetGain(val)
+#             elif cmd == 'bandwidth':
+#                 sdr.SetBandwidth(val)
+#             else:
+#                 print("Command not supported!")
+#
+#             StartAsyncRead(radioNum, self.sampleQ, self.commandQ, sdr=sdr)
+#
+#         except queue.Empty:  # no new commands
+#             pass
 
 """
     Class to handle passing radio commands to subprocesses (eg. gain, center frequency, etc.) 
 """
-class RadioManager:
+class CommandHandler:
     def __init__(self, numRadios):
         self.commandQ = []
 
@@ -131,6 +147,125 @@ class RadioManager:
 
     def GetQueue(self):
         return self.commandQ
+
+def StartProc(numRadios, F, Fs, sampleLength, gain, sampleQueue, commandQueue):
+    proc = []
+    barrier = Barrier(numRadios)  # barrier for each channel/radio
+
+    # start reading samples from each radio
+    for i in range(numRadios):
+        name = "chan" + str(i) + "_proc"
+        # proc.append(Process(name=name,
+        #                     target=StartAsyncRead,
+        #                     kwargs={'radioNum': i + 1,
+        #                             'sampleQueue': sampleQueue,
+        #                             'commandQueue': commandQueue[i],
+        #                             'barrier': barrier,
+        #                             'F': F,
+        #                             'Fs': Fs,
+        #                             'sampleLength': sampleLength,
+        #                             'gain': gain}))
+        p = RadioHandler(i + 1, F, Fs, gain, sampleQueue, commandQueue, sampleLength, barrier)
+        # proc.append(p)
+        # proc[i].start()
+        p.start()
+        time.sleep(0.1)  # I don't know why librtlsdr craps out without this delay
+
+
+class RadioHandler(Process):
+    def __init__(self,
+                 radioNum,
+                 centerFreq,
+                 sampleRate,
+                 gain,
+                 sampleQ,
+                 commandQ,
+                 sampleLength,
+                 barrier):
+
+        Process.__init__(self)
+
+        self.centerFreq = centerFreq
+        self.radioNum = radioNum
+        self.barrier = barrier
+        # self.callback = 0
+
+        self.deviceIndex = RtlSdr.get_device_index_by_serial(str(self.radioNum))
+        # self.sdr = RtlSdr(device_index=self.deviceIndex,
+        #                   test_mode_enabled=False,
+        #                   serial_number=None,
+        #                   dithering_enabled=False)
+        # self.sdr.set_center_freq(centerFreq)
+        # self.sdr.set_agc_mode(False)
+        # # self.sdr.set_manual_gain_enabled(True)
+        # self.sdr.set_gain(gain)
+        # self.sdr.set_sample_rate(sampleRate)
+        # self.sdr.set_bandwidth(sampleRate)
+
+        self.sampleRate = sampleRate
+        self.gain = gain
+        self.sdr = 0
+
+        self.sampleQ = sampleQ
+        self.commandQ = commandQ
+        self.sampleLength = sampleLength
+
+    def __call__(self, samples, radioNum):
+        # (radioNum, sdr) = context  # unpack
+        # put data in queue with format: (context, samples[...])
+        # self.sampleQ.put(np.append(np.array(context), np.array(samples)))
+        self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
+
+        try:
+            cmdDict = self.commandQ[radioNum-1].get_nowait()  # pull dict from queue
+
+            cmd, val = list(cmdDict.items())[0]  # get command & value to send (change freq, gain, etc.)
+
+            if cmd == 'frequency':
+                self.SetFrequency(val)
+            elif cmd == 'gain':
+                self.sdr.set_gain(val)
+            elif cmd == 'bandwidth':
+                self.SetBandwidth(val)
+            else:
+                print("Command not supported!")
+
+            # StartAsyncRead(radioNum, self.sampleQ, self.commandQ, sdr=sdr)
+
+        except queue.Empty:  # no new commands
+            pass
+
+    def run(self):
+        # callback = GetSamplesCallback(self.sampleQueue, self.commandQueue)
+        self.sdr = RtlSdr(device_index=self.deviceIndex,
+                          test_mode_enabled=False,
+                          serial_number=None,
+                          dithering_enabled=False)
+
+        self.sdr.set_center_freq(self.centerFreq)
+        self.sdr.set_agc_mode(False)
+        # self.sdr.set_manual_gain_enabled(True)
+        self.sdr.set_gain(self.gain)
+        self.sdr.set_sample_rate(self.sampleRate)
+        self.sdr.set_bandwidth(self.sampleRate)
+
+        self.barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
+        self.sdr.read_samples_async(self.__call__, num_samples=self.sampleLength, context=int(self.radioNum))
+
+    def SetGain(self, gain):
+        # self.sdr.gain = gain
+        # self.sdr.cancel_read_async()
+        # time.sleep(1)
+        self.sdr.set_gain(gain)
+
+    def SetFrequency(self, frequency):
+        # self.sdr.center_freq = frequency
+        self.sdr.set_center_freq(frequency)
+
+    def SetBandwidth(self, bandwidth):
+        # self.sdr.bandwidth = bandwidth
+        self.sdr.set_bandwidth(bandwidth)
+
 
 """
     Class to compile samples for higher level DSP functions
@@ -712,7 +847,6 @@ class DSP_AOA:  # TODO: add null steering
             self.x = r * sf * np.cos(2 * np.pi / self.numRadios * np.arange(self.numRadios))
             self.y = -1 * r * sf * np.sin(2 * np.pi / self.numRadios * np.arange(self.numRadios))
 
-
         #self.V = np.zeros((self.numRadios, self.numRadios - self.numSignals), dtype=np.complex64)
         # self.thetaScan = np.linspace(-scanAngle, scanAngle, numPoints)  # -90 to 90 degrees
 
@@ -722,10 +856,6 @@ class DSP_AOA:  # TODO: add null steering
 
     def MUSIC(self, samples):
         avg = []
-        # print("0: " + str(samples[0][1000]))
-        # print("1: " + str(samples[1][1000]))
-        # print("2: " + str(samples[2][1000]))
-        # print("3: " + str(samples[3][1000]))
 
         for i in range(self.batchSize, self.length-self.batchSize, self.batchSize):
             # part that doesn't change with theta_i
@@ -824,8 +954,10 @@ def main():
     sampleQ = Queue()
 
     # Start manager for each radio
-    radioManager = RadioManager(numRadios)
-    commandQ = radioManager.GetQueue()
+    # radioManager = RadioManager(numRadios)
+
+    commandManager = CommandHandler(numRadios)
+    commandQ = commandManager.GetQueue()
 
     # Start new process for each channel
     StartProc(numRadios, centerFrequency, sampleRate, sampleLength, calGain, sampleQ, commandQ)
@@ -884,7 +1016,8 @@ def main():
             else:
                 if firstCall:
                     firstCall = False
-                    radioManager.SendCommand('gain', defaultGain)
+                    commandManager.SendCommand('gain', defaultGain)
+                    # radioManager.SendCommand('frequency', 144.000e6)
 
                 filteredSamples = dsp.FilterData(samples)
                 #filteredSamples = dsp.FilterCalFIR(samples)
