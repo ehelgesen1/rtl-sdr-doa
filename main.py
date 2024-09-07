@@ -8,166 +8,19 @@ from multiprocessing import Process, Barrier, Queue
 import queue
 import math
 import sys
-from scipy.io import loadmat
+# from scipy.io import loadmat
 
 
 np.set_printoptions(threshold=sys.maxsize)
 
-"""
-    Classes/functions for reading RTL-SDR data. Each receiver is spawned into its own process and data is passed to a
-    shared queue. 
-"""
-
-"""
-    Class for RTL-SDR.
-    Args:
-      radioNum: serial number
-      centerFreq: tuning frequency
-      sampRate: sample rate
-      gain: default gain
-"""
-# class Sdr: # TODO: implmement functions to change gain, frequency, etc.
-#     def __init__(self,
-#                  radioNum,
-#                  centerFreq,
-#                  sampleRate,
-#                  gain):
-#
-#         self.centerFreq = centerFreq
-#         # self.callback = 0
-#
-#         self.deviceIndex = RtlSdr.get_device_index_by_serial(str(radioNum))
-#         self.sdr = RtlSdr(device_index=self.deviceIndex,
-#                           test_mode_enabled=False,
-#                           serial_number=None,
-#                           dithering_enabled=False)
-#         self.sdr.set_center_freq(centerFreq)
-#         self.sdr.set_agc_mode(False)
-#         # self.sdr.set_manual_gain_enabled(True)
-#         self.sdr.set_gain(gain)
-#         self.sdr.set_sample_rate(sampleRate)
-#         self.sdr.set_bandwidth(sampleRate)
-#
-#     def SetGain(self, gain):
-#         # self.sdr.gain = gain
-#         self.sdr.cancel_read_async()
-#         time.sleep(1)
-#         self.sdr.set_gain(gain)
-#
-#     def SetFrequency(self, frequency):
-#         # self.sdr.center_freq = frequency
-#         self.sdr.set_center_freq(frequency)
-#
-#     def SetBandwidth(self, bandwidth):
-#         # self.sdr.bandwidth = bandwidth
-#         self.sdr.set_bandwidth(bandwidth)
-
-
-# Function to start async read from one radio
-# def StartAsyncRead(radioNum,
-#                    sampleQueue,
-#                    commandQueue,
-#                    sdr=None,
-#                    barrier=None,
-#                    F=100e6,
-#                    Fs=2.4e6,
-#                    sampleLength=100000,
-#                    gain=1):
-#     # currentSdr = Sdr(radioNum, F, Fs, gain)
-#     #
-#     # callback = GetSamplesCallback(sampleQueue, commandQueue)
-#     #
-#     # barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
-#     # currentSdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), currentSdr, callback))
-#
-#     if sdr is None:
-#         sdr = Sdr(radioNum, F, Fs, gain)
-#
-#         callback = GetSamplesCallback(sampleQueue, commandQueue)
-#
-#         barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
-#         sdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), sdr, callback))
-#     else:
-#         callback = GetSamplesCallback(sampleQueue, commandQueue)
-#
-#         # barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
-#         sdr.sdr.read_samples_async(callback, num_samples=sampleLength, context=(int(radioNum), sdr, callback))
-
-"""
-    Callback for async sample reads, puts radio number and data into queue
-"""
-# class GetSamplesCallback:
-#     def __init__(self, sampleQ, commandQ):
-#         self.sampleQ = sampleQ
-#         self.commandQ = commandQ
-#         self.numSamples = 100000
-#
-#     # def __call__(self, samples, context):
-#     def __call__(self, samples, context):
-#         (radioNum, sdr, callback) = context  # unpack
-#         # put data in queue with format: (context, samples[...])
-#         # self.sampleQ.put(np.append(np.array(context), np.array(samples)))
-#         self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
-#
-#         try:
-#             cmdDict = self.commandQ.get_nowait()  # pull dict from queue
-#
-#             cmd, val = list(cmdDict.items())[0]  # get command & value to send (change freq, gain, etc.)
-#
-#             if cmd == 'frequency':
-#                 sdr.SetFrequency(val)
-#             elif cmd == 'gain':
-#                 sdr.SetGain(val)
-#             elif cmd == 'bandwidth':
-#                 sdr.SetBandwidth(val)
-#             else:
-#                 print("Command not supported!")
-#
-#             StartAsyncRead(radioNum, self.sampleQ, self.commandQ, sdr=sdr)
-#
-#         except queue.Empty:  # no new commands
-#             pass
-
-"""
-    Class to handle passing radio commands to subprocesses (eg. gain, center frequency, etc.) 
-"""
-class CommandHandler:
-    def __init__(self, numRadios):
-        self.commandQ = []
-
-        for i in range(numRadios):
-            self.commandQ.append(Queue())
-
-    def SendCommand(self, property, value):
-        command = {property: value}  # dict
-
-        # add command to each queue
-        for radioQ in self.commandQ:
-            radioQ.put(command)
-
-    def GetQueue(self):
-        return self.commandQ
-
-def StartProc(numRadios, F, Fs, sampleLength, gain, sampleQueue, commandQueue):
+def StartProc(numRadios, F, Fs, sampleLength, gain, sampleQueue):
     proc = []
     barrier = Barrier(numRadios)  # barrier for each channel/radio
 
     # start reading samples from each radio
     for i in range(numRadios):
         name = "chan" + str(i) + "_proc"
-        # proc.append(Process(name=name,
-        #                     target=StartAsyncRead,
-        #                     kwargs={'radioNum': i + 1,
-        #                             'sampleQueue': sampleQueue,
-        #                             'commandQueue': commandQueue[i],
-        #                             'barrier': barrier,
-        #                             'F': F,
-        #                             'Fs': Fs,
-        #                             'sampleLength': sampleLength,
-        #                             'gain': gain}))
-        p = RadioHandler(i + 1, F, Fs, gain, sampleQueue, commandQueue, sampleLength, barrier)
-        # proc.append(p)
-        # proc[i].start()
+        p = RadioHandler(i + 1, F, Fs, gain, sampleQueue, sampleLength, barrier)
         p.start()
         time.sleep(0.1)  # I don't know why librtlsdr craps out without this delay
 
@@ -179,7 +32,6 @@ class RadioHandler(Process):
                  sampleRate,
                  gain,
                  sampleQ,
-                 commandQ,
                  sampleLength,
                  barrier):
 
@@ -188,84 +40,22 @@ class RadioHandler(Process):
         self.centerFreq = centerFreq
         self.radioNum = radioNum
         self.barrier = barrier
-        # self.callback = 0
 
         self.deviceIndex = RtlSdr.get_device_index_by_serial(str(self.radioNum))
-        # self.sdr = RtlSdr(device_index=self.deviceIndex,
-        #                   test_mode_enabled=False,
-        #                   serial_number=None,
-        #                   dithering_enabled=False)
-        # self.sdr.set_center_freq(centerFreq)
-        # self.sdr.set_agc_mode(False)
-        # # self.sdr.set_manual_gain_enabled(True)
-        # self.sdr.set_gain(gain)
-        # self.sdr.set_sample_rate(sampleRate)
-        # self.sdr.set_bandwidth(sampleRate)
 
         self.sampleRate = sampleRate
         self.gain = gain
         self.sdr = 0
 
         self.sampleQ = sampleQ
-        self.commandQ = commandQ
         self.sampleLength = sampleLength
 
+    """
+        Callback for async sample reads, puts radio number and data into queue
+    """
     def __call__(self, samples, radioNum):
-        # (radioNum, sdr) = context  # unpack
         # put data in queue with format: (context, samples[...])
-        # self.sampleQ.put(np.append(np.array(context), np.array(samples)))
         self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
-
-        try:
-            cmdDict = self.commandQ[radioNum-1].get_nowait()  # pull dict from queue
-
-            cmd, val = list(cmdDict.items())[0]  # get command & value to send (change freq, gain, etc.)
-
-            if cmd == 'frequency':
-                self.SetFrequency(val)
-            elif cmd == 'gain':
-                self.sdr.set_gain(val)
-            elif cmd == 'bandwidth':
-                self.SetBandwidth(val)
-            else:
-                print("Command not supported!")
-
-            # StartAsyncRead(radioNum, self.sampleQ, self.commandQ, sdr=sdr)
-
-        except queue.Empty:  # no new commands
-            pass
-
-    def run(self):
-        # callback = GetSamplesCallback(self.sampleQueue, self.commandQueue)
-        self.sdr = RtlSdr(device_index=self.deviceIndex,
-                          test_mode_enabled=False,
-                          serial_number=None,
-                          dithering_enabled=False)
-
-        self.sdr.set_center_freq(self.centerFreq)
-        self.sdr.set_agc_mode(False)
-        # self.sdr.set_manual_gain_enabled(True)
-        self.sdr.set_gain(self.gain)
-        self.sdr.set_sample_rate(self.sampleRate)
-        self.sdr.set_bandwidth(self.sampleRate)
-
-        self.barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
-        self.sdr.read_samples_async(self.__call__, num_samples=self.sampleLength, context=int(self.radioNum))
-
-    def SetGain(self, gain):
-        # self.sdr.gain = gain
-        # self.sdr.cancel_read_async()
-        # time.sleep(1)
-        self.sdr.set_gain(gain)
-
-    def SetFrequency(self, frequency):
-        # self.sdr.center_freq = frequency
-        self.sdr.set_center_freq(frequency)
-
-    def SetBandwidth(self, bandwidth):
-        # self.sdr.bandwidth = bandwidth
-        self.sdr.set_bandwidth(bandwidth)
-
 
 """
     Class to compile samples for higher level DSP functions
@@ -329,7 +119,6 @@ class CollectSamples:
 """
     Functions for plotting data.
 """
-# TODO: rewrite this crap code
 class PlotPSD:
     def __init__(self, Fc, Fs):
         self.Fc = Fc
@@ -354,7 +143,7 @@ class PlotPSD:
 
             plt.clf()
             # plt.magnitude_spectrum(data[0], Fs=self.Fs/1e6, scale='dB', Fc=self.Fc/1e6)
-            plt.psd(data[0], Fs=self.Fs / 1e6, Fc=self.Fc / 1e6)
+            plt.psd(data[0], Fs=self.Fs / 1e6, Fc=self.Fc / 1e6, scale_by_freq=False)
             plt.title('Magnitude Spectrum')
             plt.xlabel('Frequency (MHz)')
             plt.ylabel('Relative power (dBFS)')
@@ -473,7 +262,6 @@ class PlotAOA:
         self.currentTime = 0
         self.previousTime = 0
 
-        # self.thetaScan = np.linspace(-scanAngle, scanAngle, numPoints)  # 1000 different thetas between -90 and +90 degrees
         self.thetaScan = np.linspace(0, scanAngle,
                                      numPoints)  # 1000 different thetas between -90 and +90 degrees
         self.thetaScanRad = self.thetaScan * np.pi / 180  # convert to radians
@@ -508,11 +296,6 @@ class PlotAOA:
             self.previousTime = self.currentTime
 
             thetaMax = self.thetaScanRad[np.argmax(data)]
-            #thetaMax = thetaMax * np.pi / 180
-
-
-            # print(np.round(thetaMax*180/np.pi, decimals=3))
-            # print(np.round(np.max(data), decimals=3))
 
             self.ax.cla()
             self.ax.semilogy(self.thetaScanRad, data)
@@ -646,23 +429,9 @@ class DSP:
                                         0.0485536436513117,
                                         1])
 
-        # Fpass = 5 khz
-        # self.calFilterCoeffIIR = np.array([[1, -1.99929334535726, 1, 1, -1.99535226018595, 0.995600458358106],
-        #                                    [1, -1.99908625212125, 1, 1, -1.98602948505367, 0.986297943532363],
-        #                                    [1, -1.99834166684626, 1, 1, -1.97561032377051, 0.975918284143802],
-        #                                    [1, -1.99414876230346, 1, 1, -1.96567775478440, 0.966031872106796],
-        #                                    [1, 1, 0, 1, -0.980597503956064, 0]])
-        #
-        # self.calFilterScale = np.array([0.351229804689344,
-        #                                 0.293799290740268,
-        #                                 0.185704767828524,
-        #                                 0.0605200712665570,
-        #                                 0.00970124802196806,
-        #                                 1])
 
-
-        mat = loadmat('5k_FIR_30db.mat')
-        self.FIRfilter = mat["Num"].squeeze()
+        # mat = loadmat('5k_FIR_30db.mat')
+        # self.FIRfilter = mat["Num"].squeeze()
 
         self.calFilterInitCond = signal.sosfilt_zi(self.calFilterCoeffIIR)  # compute initial conditions for filter
         self.calFiltResponseLength = 20
@@ -678,27 +447,17 @@ class DSP:
 
         self.numRadiosMinusOne = self.numRadios - 1
         self.xcorr = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1), dtype=complex)
-        #self.xcorr = np.zeros((self.numRadiosMinusOne, 2*self.batchSize-1 ), dtype=complex)
         self.lags = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1))
-        #self.lags = np.zeros((self.numRadiosMinusOne, 2*self.batchSize-1))
 
         self.lag = np.zeros(self.numRadiosMinusOne)
-        # self.phase = [[] for _ in range(self.numRadios)]
-        # self.phaseDiff = np.zeros(self.numRadiosMinusOne)
-        # self.phase = np.zeros(self.numRadiosMinusOne)
-        # self.tmpPhase = [[] for _ in range(self.numRadios)]
 
         self.downsampleLength = downsampleLength
-        # self.tmpLag = np.zeros(self.numRadiosMinusOne)
         self.firstCall = True
-        # self.avgLag = np.zeros((self.numRadiosMinusOne,1))
         self.movingAvgWindow = 20
-        # self.phaseMovingAvg = [[] for _ in range(self.numRadios)]
         self.phaseMovingAvg = np.zeros((self.movingAvgWindow, self.numRadiosMinusOne))
         self.movingAvgCounter = 0
         self.avgLag = np.zeros(self.numRadios)
 
-        # self.phaseDiff = np.zeros((self.numRadiosMinusOne, downsampleLength))
         self.phaseDiff = np.zeros(self.numRadiosMinusOne)
 
         self.window = np.hamming(downsampleLength)
@@ -730,22 +489,17 @@ class DSP:
 
         return self.filtData
 
-    def FilterCalFIR(self, samples):
-        for i in range(self.numRadios):
-            self.filtData[i] = signal.filtfilt(self.FIRfilter, 1, samples[i])
-
-        return self.filtData
+    # def FilterCalFIR(self, samples):
+    #     for i in range(self.numRadios):
+    #         self.filtData[i] = signal.filtfilt(self.FIRfilter, 1, samples[i])
+    #
+    #     return self.filtData
 
     # Downsample data
     def DecimateData(self, samples):
         for i in range(self.numRadios):
             # decimate by a factor of 24 to 100 kHz
             self.downsampledData[i] = signal.decimate(samples[i], self.downsampleFactor, ftype='fir', zero_phase=True)
-            # self.downsampledData[i] = signal.resample(samples[i], int(self.sampleLength/self.downsampleFactor)+1)
-
-            # Remove DC bias from decimation
-            # avg = np.average(self.downsampledData[i])
-            # self.downsampledData[i] -= avg
 
         return self.downsampledData
 
@@ -764,8 +518,6 @@ class DSP:
             argmax = np.argmax(np.abs(xcorr))
             self.phaseDiff[i] = -np.angle(xcorr[argmax]) / np.pi
 
-        # print(self.phaseDiff)
-
         return self.lag, self.xcorr
 
     # Identical to DetermineOffset, only to check correlation
@@ -776,14 +528,10 @@ class DSP:
         for i in range(self.numRadiosMinusOne):
             self.xcorrCheck[i] = signal.correlate(samples[0], samples[i + 1], method="fft")  # compute cross correlation of channel 1 with other channels
             self.lagsCheck[i] = signal.correlation_lags(samples[0].size, samples[i + 1].size, mode="full")  # compute lags for all correlation offsets
-            # self.lagCheck[i] = self.lagsCheck[i][np.argmax(self.xcorrCheck[i])]  # find correlation peak where data matches
             argmax = np.argmax(np.abs(self.xcorrCheck[i]))
             self.lagCheck[i] = -np.angle(self.xcorr[i][argmax]) / np.pi
 
-            # self.lagCheck[i] = np.round(np.average(tmpLag))  # average time lag for each channel and round to nearest int
-
         return self.lagCheck, self.xcorrCheck
-        # return self.phaseDiff, self.xcorrCheck
 
     # Function to shift data so it is coherent between channels
     def CorrectSync(self, samples):
@@ -793,10 +541,6 @@ class DSP:
         for i in range(1, self.numRadios):
             newSamples[i] = np.roll(samples[i], int(self.lag[i - 1]))  # circularly shift array
             newSamples[i] *= np.exp(-1j*self.phaseDiff[i - 1])
-            # print(i)
-            # print("Phase diff: " + str(self.phaseDiff[i - 1]))
-            # # print("Samples: " + str(samples[i][500]))
-            # print("New samples: " + str(newSamples[i][500]))
 
         return newSamples
 
@@ -821,9 +565,6 @@ class DSP_AOA:  # TODO: add null steering
 
         self.batchSize = 1389  # 4167 / 3
         self.length = sampleLength
-        #self.batchSize = 463  # 4167 / 9
-        # self.dataInd = np.arange(0, 4167+self.batchSize, self.batchSize)
-        # print(self.dataInd)
 
         self.thetaScan = np.linspace(0, scanAngle, numPoints)  # 1000 different thetas between -90 and +90 degrees
         self.thetaScan *= np.pi / 180  # convert to radians
@@ -833,26 +574,16 @@ class DSP_AOA:  # TODO: add null steering
         if arrayType == 'linear':
             self.arrayType = 1
 
-        elif arrayType == 'circular':  # TODO: add support for more than
+        elif arrayType == 'circular':
             self.arrayType = 2
-
-            # t = 2*np.pi/self.numRadios
-            # self.radius = (antSpacing * np.sin((np.pi-t)/2) / np.sin(t))
-            # print("radius: " + str(self.radius*0.0254))
-            # self.radius = (self.radius * 0.0254) / wavelength  # normalized radius
-            # print(wavelength)
 
             sf = 1.0 / (np.sqrt(2.0) * np.sqrt(1.0 - np.cos(2 * np.pi / self.numRadios)))
             r = self.normAntSpacing * sf
             self.x = r * sf * np.cos(2 * np.pi / self.numRadios * np.arange(self.numRadios))
             self.y = -1 * r * sf * np.sin(2 * np.pi / self.numRadios * np.arange(self.numRadios))
 
-        #self.V = np.zeros((self.numRadios, self.numRadios - self.numSignals), dtype=np.complex64)
-        # self.thetaScan = np.linspace(-scanAngle, scanAngle, numPoints)  # -90 to 90 degrees
 
         self.window = np.hamming(self.numRadios)
-
-        # self.V = np.zeros((self.numRadios, self.numRadios - self.numSignals), dtype=np.complex64)
 
     def MUSIC(self, samples):
         avg = []
@@ -868,18 +599,16 @@ class DSP_AOA:  # TODO: add null steering
             for j in range(self.numRadios - self.numSignals):
                 V[:, j] = v[:, j]
 
-            # theta_scan = np.linspace(-1 * np.pi, np.pi, 1000)  # -180 to +180 degrees
-            s=0
+            s = 0
             results = []
+
             for theta_i in self.thetaScan:
                 if self.arrayType == 1:
                     s = np.exp(-2j * np.pi * self.normAntSpacing * np.arange(self.numRadios) * np.sin(theta_i))  # Steering Vector
-                    # s *= self.window  # window steering vector
                     s = s.reshape(-1, 1)
 
                 elif self.arrayType == 2:
                     s = np.exp(1j * 2 * np.pi * (self.x * np.cos(theta_i) + self.y * np.sin(theta_i)))
-                    # print(s)
                     s = s.reshape(-1, 1)  # Nrx1
 
                 metric = 1 / (s.conj().T @ V @ V.conj().T @ s)  # The main MUSIC equation
@@ -892,7 +621,6 @@ class DSP_AOA:  # TODO: add null steering
             avg.append(results)
 
         avgAoa = sum(avg)/len(avg)
-        #print(avg)
 
         return avgAoa
 
@@ -929,7 +657,7 @@ def main():
     downsampleFactor = 24  # downsampled Fs = 100kHz
     downsampleFs = sampleRate / downsampleFactor
     downsampleLength = math.ceil(sampleLength / downsampleFactor) # round up downsampled length
-    calGain = 1
+    calGain = 15
 
     # DoA configuration
     scanAngle = 360  # +/-x degrees  TODO: make this better for circular array
@@ -940,27 +668,18 @@ def main():
     psdDownsampled = PlotPSD(centerFrequency, downsampleFs)
     timeplot = PlotTime(sampleRate, sampleLength/sampleRate)
     #timeplotFiltered = PlotTime(downsampleFs, downsampleLength/downsampleFs)
-    timeplotFiltered = PlotTime(downsampleFs, downsampleLength/downsampleFs)
-    corrplot = PlotCorr(downsampleLength)
+    # timeplotFiltered = PlotTime(downsampleFs, downsampleLength/downsampleFs)
+    # corrplot = PlotCorr(downsampleLength)
 
     aoaPlot = PlotAOA(numPoints, scanAngle)
 
     radiosSynchronized = False
 
-    # wf = Waterfall(sdr1)
-    # wf.start()
-
     # Start samples queue
     sampleQ = Queue()
 
-    # Start manager for each radio
-    # radioManager = RadioManager(numRadios)
-
-    commandManager = CommandHandler(numRadios)
-    commandQ = commandManager.GetQueue()
-
     # Start new process for each channel
-    StartProc(numRadios, centerFrequency, sampleRate, sampleLength, calGain, sampleQ, commandQ)
+    StartProc(numRadios, centerFrequency, sampleRate, sampleLength, calGain, sampleQ)
 
     # Collect and manage new data from queue
     collect = CollectSamples(numRadios, sampleLength, sampleQ)
@@ -995,16 +714,10 @@ def main():
                 offsets, xcorr = dsp.DetermineSync(downsampledSamples)  # Calculate delay between channels
                 phaseCorrectedSamples = dsp.CorrectSync(downsampledSamples)  # Correct delay offset from last step
 
-                corrplot.plotCorr(xcorr)
-
-                # offsetsCorrected, xcorrCorrected = dsp.CheckOffset(phaseCorrectedSamples)  # Sanity check phase alignment
-                # print("Corrected: " + str(offsetsCorrected))
-
                 # Stop synchronizing after 150 loops
                 if count == 150:
                     radiosSynchronized = True
                     print("Sync: " + str(radiosSynchronized))
-                    # print("Final channel delay values: " + str(offsets))
 
                     offsetsCorrected, xcorrCorrected = dsp.CheckSync(
                         phaseCorrectedSamples)  # Sanity check phase alignment
@@ -1014,26 +727,13 @@ def main():
 
             # Direction finding
             else:
-                if firstCall:
-                    firstCall = False
-                    commandManager.SendCommand('gain', defaultGain)
-                    # radioManager.SendCommand('frequency', 144.000e6)
-
                 filteredSamples = dsp.FilterData(samples)
                 #filteredSamples = dsp.FilterCalFIR(samples)
                 downsampledSamples = dsp.DecimateData(filteredSamples)
                 phaseCorrectedSamples = dsp.CorrectSync(downsampledSamples)
-                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[0][500]))
-                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[1][500]))
-                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[2][500]))
-                # print("phaseCorrectedSamples: " + str(phaseCorrectedSamples[3][500]))
                 angles = dsp_aoa.MUSIC(phaseCorrectedSamples)
-                # window = np.hamming(downsampleLength)
-                timeplotFiltered.plotTime(phaseCorrectedSamples)
-                #timeplotFiltered.plotTime(downsampledSamples)
 
                 aoaPlot.plotAoaPolar(angles)
-                #aoaPlot.plotAoa(angles)
 
         """
             Debug plots
