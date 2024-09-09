@@ -8,23 +8,34 @@ from multiprocessing import Process, Barrier, Queue
 import queue
 import math
 import sys
+import argparse
+
 # from scipy.io import loadmat
 
-
 np.set_printoptions(threshold=sys.maxsize)
-
+"""
+    Classes/functions for reading RTL-SDR data. Each receiver is spawned into its own process and data is passed to a
+    shared queue. 
+"""
 def StartProc(numRadios, F, Fs, sampleLength, gain, sampleQueue):
     proc = []
     barrier = Barrier(numRadios)  # barrier for each channel/radio
 
     # start reading samples from each radio
     for i in range(numRadios):
-        name = "chan" + str(i) + "_proc"
+        # name = "chan" + str(i) + "_proc"
         p = RadioHandler(i + 1, F, Fs, gain, sampleQueue, sampleLength, barrier)
         p.start()
         time.sleep(0.1)  # I don't know why librtlsdr craps out without this delay
 
-
+"""
+    Class for RTL-SDR.
+    Args:
+      radioNum: serial number
+      centerFreq: tuning frequency
+      sampRate: sample rate
+      gain: default gain
+"""
 class RadioHandler(Process):
     def __init__(self,
                  radioNum,
@@ -56,6 +67,23 @@ class RadioHandler(Process):
     def __call__(self, samples, radioNum):
         # put data in queue with format: (context, samples[...])
         self.sampleQ.put(np.append(np.array(radioNum), np.array(samples)))
+
+    def run(self):
+        # callback = GetSamplesCallback(self.sampleQueue, self.commandQueue)
+        self.sdr = RtlSdr(device_index=self.deviceIndex,
+                          test_mode_enabled=False,
+                          serial_number=None,
+                          dithering_enabled=False)
+
+        self.sdr.set_center_freq(self.centerFreq)
+        self.sdr.set_agc_mode(False)
+        # self.sdr.set_manual_gain_enabled(True)
+        self.sdr.set_gain(self.gain)
+        self.sdr.set_sample_rate(self.sampleRate)
+        self.sdr.set_bandwidth(self.sampleRate)
+
+        self.barrier.wait()  # wait for all processes to reach this point, then start reads at the same time
+        self.sdr.read_samples_async(self.__call__, num_samples=self.sampleLength, context=int(self.radioNum))
 
 """
     Class to compile samples for higher level DSP functions
@@ -412,6 +440,10 @@ class DSP:
         self.LPFilterInitCondData = signal.sosfilt_zi(self.LPFilterCoeff)  # compute initial conditions for filter
         self.filtResponseLengthData = 20
 
+        # Decimate
+        self.downsampleFactor = downsampleFactor
+        self.downsampledData = np.zeros((self.numRadios, downsampleLength), dtype=complex)
+
         # Calibration filter, Fpass = 25khz
         # Wide filter so we get lots of noise power
         self.calFilterCoeffIIR = np.array([[1, -1.98881793496472, 1, 1, -1.97971988633092, 0.985072577263330],
@@ -437,13 +469,8 @@ class DSP:
         self.calFiltResponseLength = 20
 
         # Decimate
-        self.downsampleFactor = downsampleFactor
-        self.downsampledData = np.zeros((self.numRadios, downsampleLength), dtype=complex)
-
-        # Phase correction
-        self.endBatch = 3700
-        self.startBatch = 500  # avoid filter transient
-        self.batchSize = 200
+        # self.downsampleFactor = downsampleFactor
+        # self.downsampledData = np.zeros((self.numRadios, downsampleLength), dtype=complex)
 
         self.numRadiosMinusOne = self.numRadios - 1
         self.xcorr = np.zeros((self.numRadiosMinusOne, 2 * downsampleLength - 1), dtype=complex)
@@ -630,17 +657,70 @@ class DSP_AOA:  # TODO: add null steering
 """
 
 def main():
+    parser = argparse.ArgumentParser("rtl_sdr_doa", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-f",
+                        "--center_frequency",
+                        help="Tuning frequency in Hz.",
+                        type=lambda fc: int(float(fc)),
+                        default=100e6)
+    parser.add_argument("-b",
+                        "--bandwidth",
+                        help="Bandwidth in Hz.",
+                        type=lambda bw: int(float(bw)),
+                        default=2.4e6)
+    parser.add_argument("-g",
+                        "--gain",
+                        help="Hardware gain, valid options: 0-49 dB.",
+                        type=int,
+                        default=15)
+    parser.add_argument("-c",
+                        "--number_channels",
+                        type=int,
+                        default=4)
+    parser.add_argument("-fbw",
+                        "--filt_width",
+                        help="Filter bandwidth: huge: 25 kHz, wide: 10 kHz, normal: 5 kHz, small: 2.5 kHz, narrow: 1 kHz.",
+                        type=str,
+                        default="narrow")
+    parser.add_argument("-s",
+                        "--antenna_spacing",
+                        help="Antenna spacing in inches.",
+                        type=float,
+                        default=7)
+    parser.add_argument("-a",
+                        "--array_type",
+                        help="linear or circular.",
+                        type=str,
+                        default="circular")
+    parser.add_argument("-sig",
+                        "--num_signals",
+                        help="Number of signals of interest (up to number_channels - 1).",
+                        type=int,
+                        default=1)
+
+
+    args = parser.parse_args()
+
     # Device configuration
-    sampleRate = 2.4e6  # Msps
-    centerFrequency = 162.550e6  # MHz
+    # sampleRate = 2.4e6  # Msps
+    # centerFrequency = 162.550e6  # MHz
     # centerFrequency = 460.800e6  # MHz
-    defaultGain = 15
+    # defaultGain = 15
+
+    sampleRate = args.bandwidth  # Msps
+    centerFrequency = args.center_frequency  # MHz
+    defaultGain = args.gain
 
     # Array configuration
-    numRadios = 4
-    antSpacing = 7  # inches
-    arrayType = 'circular'
-    numSignals = 1
+    # numRadios = 4
+    # antSpacing = 7  # inches
+    # arrayType = 'circular'
+    # numSignals = 1
+
+    numRadios = args.number_channels
+    antSpacing = args.antenna_spacing  # inches
+    arrayType = args.array_type
+    numSignals = args.num_signals
 
     # Filter type
     # Options:
@@ -649,15 +729,14 @@ def main():
     #   normal: 5 kHz  (default)
     #   small:  2.5 kHz
     #   narrow: 1 kHz
-    filterType = 'normal'
-
+    # filterType = 'normal'
+    filterType = args.filt_width
 
     # DSP configuration
     sampleLength = 100000
     downsampleFactor = 24  # downsampled Fs = 100kHz
     downsampleFs = sampleRate / downsampleFactor
-    downsampleLength = math.ceil(sampleLength / downsampleFactor) # round up downsampled length
-    calGain = 15
+    downsampleLength = math.ceil(sampleLength / downsampleFactor)  # round up downsampled length
 
     # DoA configuration
     scanAngle = 360  # +/-x degrees  TODO: make this better for circular array
@@ -666,10 +745,7 @@ def main():
     # Debug plot instantiations
     psdSampled = PlotPSD(centerFrequency, sampleRate)
     psdDownsampled = PlotPSD(centerFrequency, downsampleFs)
-    timeplot = PlotTime(sampleRate, sampleLength/sampleRate)
-    #timeplotFiltered = PlotTime(downsampleFs, downsampleLength/downsampleFs)
-    # timeplotFiltered = PlotTime(downsampleFs, downsampleLength/downsampleFs)
-    # corrplot = PlotCorr(downsampleLength)
+    # timeplot = PlotTime(sampleRate, sampleLength/sampleRate)
 
     aoaPlot = PlotAOA(numPoints, scanAngle)
 
@@ -679,7 +755,7 @@ def main():
     sampleQ = Queue()
 
     # Start new process for each channel
-    StartProc(numRadios, centerFrequency, sampleRate, sampleLength, calGain, sampleQ)
+    StartProc(numRadios, centerFrequency, sampleRate, sampleLength, defaultGain, sampleQ)
 
     # Collect and manage new data from queue
     collect = CollectSamples(numRadios, sampleLength, sampleQ)
@@ -690,12 +766,11 @@ def main():
     # Run direction finding
     dsp_aoa = DSP_AOA(centerFrequency, numRadios, numSignals, antSpacing, scanAngle, numPoints, downsampleLength, arrayType)
 
-    filteredSamples = np.zeros((numRadios, downsampleLength), dtype=complex)
+    # filteredSamples = np.zeros((numRadios, downsampleLength), dtype=complex)
     downsampledSamples = np.zeros((numRadios, downsampleLength), dtype=complex)
-    angles = np.array(numPoints)
+    # angles = np.array(numPoints)
 
     count = 0
-    firstCall = True
 
     print('Calibrating...')
 
